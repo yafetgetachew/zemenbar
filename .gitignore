@@ -1,0 +1,28 @@
+.DS_Store
+node_modules
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Tauri
+target/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/src/generated/
+src-tauri/deny.toml
+src-tauri/tauri.conf.json.bak
+
+# Node.js
+node_modules/
+dist/
+build/
+
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
