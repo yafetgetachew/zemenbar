@@ -36,17 +36,22 @@
 
   let currentDate: EthiopianDate | null = $state(null);
   let calendarMonth: CalendarMonth | null = $state(null);
+  let todayMonthMeta: CalendarMonth | null = $state(null);
+
   let displayYear = $state(0);
   let displayMonth = $state(0);
   let useAmharic = $state(true); // Default to Amharic
   let useGeezNumbers = $state(false);
-  let showDateInTray = $state(false);
 
   async function loadCurrentDate() {
     try {
       currentDate = await invoke<EthiopianDate>("get_current_ethiopian_date");
       displayYear = currentDate.year;
       displayMonth = currentDate.month;
+      todayMonthMeta = await invoke<CalendarMonth>("get_ethiopian_calendar_month", {
+        year: currentDate.year,
+        month: currentDate.month,
+      });
       await loadCalendarMonth();
     } catch (error) {
       console.error("Failed to load current date:", error);
@@ -73,7 +78,6 @@
     if (!calendarMonth) return;
 
     try {
-      // Calculate required height based on content
       const baseHeight = 200; // Header + controls + padding
       const weekdayHeaderHeight = 40;
       const dayRowHeight = 42;
@@ -129,7 +133,6 @@
       const settings: AppSettings = await invoke("load_settings");
       useAmharic = settings.use_amharic;
       useGeezNumbers = settings.use_geez_numbers;
-      showDateInTray = settings.show_date_in_tray;
       console.log("Settings loaded:", settings);
     } catch (error) {
       console.error("Failed to load settings:", error);
@@ -142,8 +145,7 @@
       const settings: AppSettings = {
         use_amharic: useAmharic,
         use_geez_numbers: useGeezNumbers,
-        show_date_in_tray: showDateInTray,
-      };
+      } as any;
       await invoke("save_settings", { settings });
       console.log("Settings saved:", settings);
     } catch (error) {
@@ -163,14 +165,6 @@
     saveSettings();
   }
 
-  function toggleTrayDisplay() {
-    console.log("Toggling tray display, current state:", showDateInTray);
-    showDateInTray = !showDateInTray;
-    console.log("New tray display state:", showDateInTray);
-    updateTrayDisplay();
-    saveSettings();
-  }
-
   function measureTextWidth(text: string, font = "13px -apple-system, system-ui, Segoe UI, Roboto"): number {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
@@ -180,6 +174,7 @@
   }
 
   function getTodayDayDisplay(): string {
+
     if (calendarMonth) {
       const t = calendarMonth.days.find((d) => d.is_today);
       if (t) return useGeezNumbers ? t.day_geez : t.day.toString();
@@ -188,30 +183,32 @@
   }
 
   async function updateTrayDisplay() {
-    if (!currentDate || !calendarMonth) {
-      console.log("Cannot update tray: missing data", { currentDate, calendarMonth });
+    if (!currentDate) {
+      console.log("Cannot update tray: missing currentDate", { currentDate });
       return;
     }
 
     try {
-      if (showDateInTray) {
-        const monthName = useAmharic ? calendarMonth.month_name_amharic : calendarMonth.month_name_english;
-        const day = getTodayDayDisplay();
-        const year = getDisplayYear();
+      
+      const todayMeta = await invoke<CalendarMonth>("get_ethiopian_calendar_month", {
+        year: currentDate.year,
+        month: currentDate.month,
+      });
 
-        const fullText = `${monthName} ${day} ${year}`;
-        const monthAbbrev = useAmharic ? monthName.slice(0, 2) : monthName.slice(0, 3);
-        const compactText = `${monthAbbrev} ${day}`;
+      const monthName = useAmharic ? todayMeta.month_name_amharic : todayMeta.month_name_english;
+      const day = useGeezNumbers ? currentDate.day_geez : currentDate.day.toString();
+      const year = useGeezNumbers ? todayMeta.year_geez : currentDate.year.toString();
 
-        const thresholdPx = 160; // heuristic width for crowded menu bars; increase to prefer full date when space allows
-        const textToShow = measureTextWidth(fullText) <= thresholdPx ? fullText : compactText;
 
-        console.log("Setting tray text:", textToShow);
-        await invoke("set_tray_text", { text: textToShow });
-      } else {
-        console.log("Setting tray to icon mode");
-        await invoke("set_tray_icon");
-      }
+      const fullText = `${monthName} ${day} ${year}`;
+      const monthAbbrev = useAmharic ? monthName.slice(0, 2) : monthName.slice(0, 3);
+      const compactText = `${monthAbbrev} ${day}`;
+
+      const thresholdPx = 160; // heuristic width for crowded menu bars; increase to prefer full date when space allows
+      const textToShow = measureTextWidth(fullText) <= thresholdPx ? fullText : compactText;
+
+      console.log("Setting tray text:", textToShow);
+      await invoke("set_tray_text", { text: textToShow });
     } catch (error) {
       console.error("Failed to update tray display:", error);
     }
@@ -226,6 +223,24 @@
     return useGeezNumbers ? calendarMonth.year_geez : calendarMonth.year.toString();
   }
 
+  function getTodayMonthName(): string {
+    if (todayMonthMeta) {
+      return useAmharic ? todayMonthMeta.month_name_amharic : todayMonthMeta.month_name_english;
+    }
+    return "";
+  }
+
+  function getTodayYearDisplay(): string {
+    if (todayMonthMeta) {
+      return useGeezNumbers
+        ? todayMonthMeta.year_geez
+        : (currentDate ? currentDate.year.toString() : "");
+    }
+    // Fallback: standard digits if Geez year is unavailable yet
+    return currentDate ? currentDate.year.toString() : "";
+  }
+
+
   onMount(async () => {
     // Load settings first
     await loadSettings();
@@ -233,6 +248,8 @@
     await loadCurrentDate();
     // Position window properly when component mounts
     try {
+
+
       await invoke("position_calendar_window", { trayX: null });
       // Update tray display after loading data
       updateTrayDisplay();
@@ -242,8 +259,8 @@
   });
 
   // Create empty cells for the first week to align the calendar properly
-  const emptyStartCells = $derived(calendarMonth ? Array(calendarMonth.first_day_weekday).fill(null) : []);
-  
+  const emptyStartCells = $derived(calendarMonth ? Array((calendarMonth as CalendarMonth).first_day_weekday).fill(null) : []);
+
   // Weekday headers
   const weekdaysEnglish = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const weekdaysAmharic = ["እሁድ", "ሰኞ", "ማክሰኞ", "ረቡዕ", "ሐሙስ", "ዓርብ", "ቅዳሜ"];
@@ -272,9 +289,6 @@
       <button class="control-button" onclick={toggleNumbers}>
         {useGeezNumbers ? "1234" : "፩፪፫፬"}
       </button>
-      <button class="control-button" onclick={toggleTrayDisplay}>
-        {showDateInTray ? "📅" : "📝"}
-      </button>
     </div>
 
     <div class="calendar-grid">
@@ -299,10 +313,7 @@
     {#if currentDate}
       <div class="current-date-info">
         <div class="today-info">
-          {useAmharic ? "ዛሬ" : "Today"}: {useAmharic ?
-            calendarMonth.month_name_amharic :
-            calendarMonth.month_name_english
-          } {getTodayDayDisplay()} {getDisplayYear()}
+          {useAmharic ? "ዛሬ" : "Today"}: {getTodayMonthName()} {getTodayDayDisplay()} {getTodayYearDisplay()}
         </div>
       </div>
     {/if}
