@@ -1,16 +1,26 @@
+
+//!
+//! This library provides Ethiopian calendar functionality for Zemenbarwith system tray integration.
+
 use ethiopic_calendar::{EthiopianYear, GregorianYear};
 use chrono::{Datelike, Local};
 use serde::{Deserialize, Serialize};
 
+/// Represents a date in the Ethiopian calendar system.
+///
+/// The Ethiopian calendar has 13 months: 12 months of 30 days each,
+/// plus Pagumē with 5 or 6 days depending on leap years.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EthiopianDate {
     pub year: usize,
     pub month: usize,
     pub day: usize,
+    /// Day formatted in Geez numerals
     pub day_geez: String,
 }
 
 impl EthiopianDate {
+    /// Creates an `EthiopianDate` representing today's date.
     pub fn today() -> Self {
         let today = Local::now().date_naive();
         let gregorian = GregorianYear::new(today.year() as usize, today.month() as usize, today.day() as usize);
@@ -25,6 +35,9 @@ impl EthiopianDate {
         }
     }
 
+    /// Converts a Gregorian date to Ethiopian calendar.
+    ///
+    /// Returns `None` if the conversion fails.
     pub fn from_gregorian(year: i32, month: u32, day: u32) -> Option<Self> {
         let gregorian = GregorianYear::new(year as usize, month as usize, day as usize);
         let ethiopian: EthiopianYear = gregorian.into();
@@ -89,11 +102,9 @@ impl EthiopianDate {
     }
 
     pub fn weekday(&self) -> usize {
-        // Convert back to Gregorian to get weekday
         let ethiopian = EthiopianYear::new(self.year, self.month, self.day);
         let gregorian: GregorianYear = ethiopian.into();
 
-        // Create a chrono date to get weekday
         if let Some(date) = chrono::NaiveDate::from_ymd_opt(gregorian.year() as i32, gregorian.month() as u32, gregorian.day() as u32) {
             date.weekday().num_days_from_sunday() as usize
         } else {
@@ -127,6 +138,7 @@ impl EthiopianDate {
         }
     }
 
+    /// Converts Arabic numerals to Geez numerals.
     pub fn to_geez_number(num: usize) -> String {
         if num == 0 {
             return "".to_string();
@@ -146,12 +158,10 @@ impl EthiopianDate {
                 } else {
                     format!("፲{}", geez_digits[ones])
                 }
+            } else if ones == 0 {
+                geez_tens[tens].to_string()
             } else {
-                if ones == 0 {
-                    geez_tens[tens].to_string()
-                } else {
-                    format!("{}{}", geez_tens[tens], geez_digits[ones])
-                }
+                format!("{}{}", geez_tens[tens], geez_digits[ones])
             }
         } else if num < 1000 {
             let hundreds = num / 100;
@@ -168,10 +178,9 @@ impl EthiopianDate {
                 format!("{}{}", hundred_part, Self::to_geez_number(remainder))
             }
         } else if num < 10000 {
-            let thousands = num / 100; // Work with hundreds instead
+            let thousands = num / 100;
             let remainder = num % 100;
 
-            // Convert the hundreds part (10-99 hundreds)
             let hundred_part = if thousands < 10 {
                 format!("{}፻", geez_digits[thousands])
             } else if thousands < 100 {
@@ -183,12 +192,10 @@ impl EthiopianDate {
                     } else {
                         format!("፲{}፻", geez_digits[ones])
                     }
+                } else if ones == 0 {
+                    format!("{}፻", geez_tens[tens])
                 } else {
-                    if ones == 0 {
-                        format!("{}፻", geez_tens[tens])
-                    } else {
-                        format!("{}{}፻", geez_tens[tens], geez_digits[ones])
-                    }
+                    format!("{}{}፻", geez_tens[tens], geez_digits[ones])
                 }
             } else {
                 format!("{}፻", Self::to_geez_number(thousands))
@@ -200,7 +207,6 @@ impl EthiopianDate {
                 format!("{}{}", hundred_part, Self::to_geez_number(remainder))
             }
         } else {
-            // For very large numbers, fall back to regular numbers
             num.to_string()
         }
     }
@@ -214,6 +220,7 @@ impl EthiopianDate {
     }
 }
 
+/// Represents a complete month view for the Ethiopian calendar.
 #[derive(Serialize, Deserialize)]
 pub struct CalendarMonth {
     pub year: usize,
@@ -274,15 +281,19 @@ use tauri::{
 };
 use std::sync::Mutex;
 
-// Global variable to store the last tray position
+/// Global state for remembering tray icon position to position calendar window correctly.
 static LAST_TRAY_X: Mutex<Option<f64>> = Mutex::new(None);
 
+/// Application settings that control calendar display and behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     pub use_amharic: bool,
     pub use_geez_numbers: bool,
     pub show_date_in_tray: bool,
+    pub use_numeric_format: bool,
+    pub show_qen: bool,
+    pub show_amete_mihret: bool,
 }
 
 impl Default for AppSettings {
@@ -291,14 +302,11 @@ impl Default for AppSettings {
             use_amharic: true,
             use_geez_numbers: false,
             show_date_in_tray: true,
+            use_numeric_format: false,
+            show_qen: false,
+            show_amete_mihret: false,
         }
     }
-}
-
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
 #[tauri::command]
@@ -311,49 +319,42 @@ fn get_ethiopian_calendar_month(year: usize, month: usize) -> CalendarMonth {
     CalendarMonth::new(year, month)
 }
 
+/// Tauri command to convert Gregorian date to Ethiopian calendar.
 #[tauri::command]
 fn convert_gregorian_to_ethiopian(year: i32, month: u32, day: u32) -> Option<EthiopianDate> {
     EthiopianDate::from_gregorian(year, month, day)
 }
 
+/// Positions the calendar window relative to the tray icon. Maybe it would be to have it left align to tray? TODO
+///
+/// Handles DPI scaling and fallback positioning when tray position is unknown.
 #[tauri::command]
 fn position_calendar_window(app: tauri::AppHandle, tray_x: Option<f64>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
-        // Get the primary monitor to calculate proper positioning
-        if let Ok(monitor) = window.primary_monitor() {
-            if let Some(monitor) = monitor {
-                let scale_factor = monitor.scale_factor();
+        if let Ok(Some(monitor)) = window.primary_monitor() {
+            let scale_factor = monitor.scale_factor();
 
-                // Position window directly under the tray icon
-                let x = if let Some(tray_x) = tray_x {
-                    // Store the new tray position
-                    if let Ok(mut last_x) = LAST_TRAY_X.lock() {
-                        *last_x = Some(tray_x);
-                    }
-                    // Use provided tray position
-                    tray_x / scale_factor
+            let x = if let Some(tray_x) = tray_x {
+                if let Ok(mut last_x) = LAST_TRAY_X.lock() {
+                    *last_x = Some(tray_x);
+                }
+                tray_x / scale_factor
+            } else if let Ok(last_x) = LAST_TRAY_X.lock() {
+                if let Some(stored_x) = *last_x {
+                    stored_x / scale_factor
                 } else {
-                    // Try to use stored tray position first
-                    if let Ok(last_x) = LAST_TRAY_X.lock() {
-                        if let Some(stored_x) = *last_x {
-                            stored_x / scale_factor
-                        } else {
-                            // Fallback: estimate tray position (usually in top-right area)
-                            let size = monitor.size();
-                            let logical_width = (size.width as f64) / scale_factor;
-                            logical_width - 380.0 // 360px window + 20px margin
-                        }
-                    } else {
-                        // Fallback: estimate tray position (usually in top-right area)
-                        let size = monitor.size();
-                        let logical_width = (size.width as f64) / scale_factor;
-                        logical_width - 380.0 // 360px window + 20px margin
-                    }
-                };
+                    let size = monitor.size();
+                    let logical_width = (size.width as f64) / scale_factor;
+                    logical_width - 380.0
+                }
+            } else {
+                let size = monitor.size();
+                let logical_width = (size.width as f64) / scale_factor;
+                logical_width - 380.0
+            };
 
-                let y = 28.0; // Below menu bar
-                let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
-            }
+            let y = 28.0;
+            let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
         }
     }
     Ok(())
@@ -369,26 +370,16 @@ fn resize_calendar_window(app: tauri::AppHandle, height: f64) -> Result<(), Stri
 
 #[tauri::command]
 fn set_tray_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-    println!("Setting tray text to: {}", text);
     if let Some(tray) = app.tray_by_id("main") {
-        // Just set the title, keep any existing icon
         let _ = tray.set_title(Some(&text));
-        println!("Tray text set successfully");
-    } else {
-        println!("Tray not found!");
     }
     Ok(())
 }
 
 #[tauri::command]
 fn set_tray_icon(app: tauri::AppHandle) -> Result<(), String> {
-    println!("Setting tray to icon mode");
     if let Some(tray) = app.tray_by_id("main") {
-        // Clear the title to show just the icon
         let _ = tray.set_title(Some("📅"));
-        println!("Tray icon set successfully");
-    } else {
-        println!("Tray not found!");
     }
     Ok(())
 }
@@ -415,11 +406,20 @@ fn load_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
     }
 }
 
+/// Copies text to the system clipboard.
+#[tauri::command]
+async fn copy_to_clipboard(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| format!("Failed to copy to clipboard: {}", e))
+}
+
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), String> {
     let settings_path = get_settings_path(&app)?;
 
-    // Create parent directory if it doesn't exist
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create settings directory: {}", e))?;
@@ -430,18 +430,15 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
 
     std::fs::write(&settings_path, content)
         .map_err(|e| format!("Failed to write settings file: {}", e))?;
-
-    println!("Settings saved: {:?}", settings);
     Ok(())
 }
-
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("settings") {
                 let _ = window.show();
@@ -450,21 +447,17 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .setup(|app| {
-            // Hide from dock on macOS
             #[cfg(target_os = "macos")]
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
 
-            // Enable autostart (login item) only if not already enabled
             {
                 use tauri_plugin_autostart::ManagerExt;
                 if let Ok(false) = app.autolaunch().is_enabled() {
                     let _ = app.autolaunch().enable();
                 }
             }
-
-            // Create tray menu
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let show_item = MenuItem::with_id(app, "show", "Show Calendar", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
@@ -481,7 +474,6 @@ pub fn run() {
                     }
                     "show" => {
                         if let Some(window) = app.get_webview_window("settings") {
-                            // TODO: Make Position of window fixed
                             let _ = position_calendar_window(app.clone(), None);
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -489,31 +481,25 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| match event {
-                    TrayIconEvent::Click {
+                .on_tray_icon_event(|tray, event| if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         position,
                         ..
-                    } => {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("settings") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                // Position window directly under the tray icon
-                                let tray_x = position.x - 180.0; // Center the 360px window under the tray icon (TODO: change to fixed)
-                                let _ = position_calendar_window(app.clone(), Some(tray_x));
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                    } = event {
+                    let app = tray.app_handle();
+                    if let Some(window) = app.get_webview_window("settings") {
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = window.hide();
+                        } else {
+                            let tray_x = position.x - 180.0;
+                            let _ = position_calendar_window(app.clone(), Some(tray_x));
+                            let _ = window.show();
+                            let _ = window.set_focus();
                         }
                     }
-                    _ => {}
                 })
                 .build(app)?;
-
-            // Initialize tray text to today's date (default is always date text)
             {
                 let settings = load_settings(app.handle().clone()).unwrap_or_default();
                 let today = EthiopianDate::today();
@@ -526,19 +512,13 @@ pub fn run() {
                     let _ = tray.set_title(Some(&text));
                 }
             }
-
-            // Set up window event handler for click-away behavior
             if let Some(window) = app.get_webview_window("settings") {
                 let window_clone = window.clone();
                 window.on_window_event(move |event| {
-                    match event {
-                        tauri::WindowEvent::Focused(false) => {
-                            // Hide window when it loses focus (click away) - but only if it's visible
-                            if window_clone.is_visible().unwrap_or(false) {
-                                let _ = window_clone.hide();
-                            }
+                    if let tauri::WindowEvent::Focused(false) = event {
+                        if window_clone.is_visible().unwrap_or(false) {
+                            let _ = window_clone.hide();
                         }
-                        _ => {}
                     }
                 });
             }
@@ -546,7 +526,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             get_current_ethiopian_date,
             get_ethiopian_calendar_month,
             convert_gregorian_to_ethiopian,
@@ -555,7 +534,8 @@ pub fn run() {
             set_tray_text,
             set_tray_icon,
             load_settings,
-            save_settings
+            save_settings,
+            copy_to_clipboard
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

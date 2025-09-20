@@ -6,7 +6,7 @@ ZemenBar is a lightweight macOS menu bar app that shows today’s Ethiopian date
 ## Screenshots
 
 ![Zemen Bar](docs/images/1.png)
-![Settings Panel](docs/images/2.png)
+![Calendar window](docs/images/3.png)
 
 
 ## Credits and inspiration
@@ -18,15 +18,21 @@ ZemenBar uses the excellent [ethiopic-calendar](https://crates.io/crates/ethiopi
 ## Features
 - Ethiopian date in the macOS menu bar (auto-refreshed hourly)
 - Compact vs. full tray text depending on available width
-- Click the tray text to open a small settings panel under the menu bar
+- Click the tray text to open a calendar window with a settings panel
+- Full calendar view with current month display
+- Copy current date to clipboard with one click
+- Smart window positioning (adapts to screen edges and DPI scaling - this one was a pain in the ass)
 - Options:
   - Language: English or አማርኛ
   - Numerals: Arabic or ግዕዝ (Ge’ez)
+  - Numeric format toggle (DD/MM/YYYY vs. text format)
+  - Qen suffix toggle (ቀን) for Amharic dates
+  - Amete Mihret suffix toggle (ዓ.ም.) for Amharic years
 - Settings are persisted between launches
 - Autostart and single-instance behavior on macOS
+- Dark mode support with system theme detection
 
 ## Roadmap / Planned features
-- Full calendar view (month/week/day) — [in progress]
 - Google Calendar integration (show events; read-only initially)
 - Public holidays and other indicators (Ethiopian holidays or other; configurable)
 
@@ -70,6 +76,7 @@ Contributions are welcome!
 
 Before submitting a PR:
 - Run `pnpm build` to ensure the Svelte UI builds.
+- Run `cargo tauri dev` to ensure the app works fine.
 - Run `cargo check` and `cargo clippy -W clippy::all` to verify the Rust side.
 - Manually smoke-test the tray behavior (click to open/close, focus-away to hide, settings persist, tray updates and also make sure to test the behaviour when an external screen is connected).
 
