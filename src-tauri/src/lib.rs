@@ -1,6 +1,5 @@
-
 //!
-//! This library provides Ethiopian calendar functionality for Zemenbarwith system tray integration.
+//! This library provides Ethiopian calendar functionality for Zemenbar with system tray integration.
 
 use ethiopic_calendar::{EthiopianYear, GregorianYear};
 use chrono::{Datelike, Local};
@@ -279,7 +278,19 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+use tauri_nspanel::{
+    tauri_panel, CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt,
+};
 use std::sync::Mutex;
+
+tauri_panel! {
+    panel!(CalendarPanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true
+        }
+    })
+}
 
 /// Global state for remembering tray icon position to position calendar window correctly.
 static LAST_TRAY_X: Mutex<Option<f64>> = Mutex::new(None);
@@ -326,8 +337,6 @@ fn convert_gregorian_to_ethiopian(year: i32, month: u32, day: u32) -> Option<Eth
 }
 
 /// Positions the calendar window relative to the tray icon. Maybe it would be to have it left align to tray? TODO
-///
-/// Handles DPI scaling and fallback positioning when tray position is unknown.
 #[tauri::command]
 fn position_calendar_window(app: tauri::AppHandle, tray_x: Option<f64>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -433,9 +442,33 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
     Ok(())
 }
 
+fn create_calendar_panel(app: &tauri::App) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        let panel = window.to_panel::<CalendarPanel>()
+            .map_err(|e| format!("Failed to convert window to panel: {}", e))?;
+
+        panel.set_level(PanelLevel::Floating.value());
+        panel.set_style_mask(
+            StyleMask::empty()
+                .nonactivating_panel()
+                .into()
+        );
+        panel.set_collection_behavior(
+            CollectionBehavior::new()
+                .full_screen_auxiliary()
+                .can_join_all_spaces()
+                .into()
+        );
+        panel.set_hides_on_deactivate(false);
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -476,7 +509,6 @@ pub fn run() {
                         if let Some(window) = app.get_webview_window("settings") {
                             let _ = position_calendar_window(app.clone(), None);
                             let _ = window.show();
-                            let _ = window.set_focus();
                         }
                     }
                     _ => {}
@@ -495,7 +527,7 @@ pub fn run() {
                             let tray_x = position.x - 180.0;
                             let _ = position_calendar_window(app.clone(), Some(tray_x));
                             let _ = window.show();
-                            let _ = window.set_focus();
+                            // No focus call needed for NSPanel
                         }
                     }
                 })
@@ -521,6 +553,10 @@ pub fn run() {
                         }
                     }
                 });
+            }
+
+            if let Err(e) = create_calendar_panel(app) {
+                eprintln!("Failed to setup calendar panel: {}", e);
             }
 
             Ok(())
