@@ -1,10 +1,18 @@
-
 //!
-//! This library provides Ethiopian calendar functionality for Zemenbarwith system tray integration.
+//! This library provides Ethiopian calendar functionality for Zemenbar with system tray integration.
 
+use chrono::{Datelike, FixedOffset, Utc};
 use ethiopic_calendar::{EthiopianYear, GregorianYear};
-use chrono::{Datelike, Local};
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
+use tauri_nspanel::{
+    tauri_panel, CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt,
+};
 
 /// Represents a date in the Ethiopian calendar system.
 ///
@@ -20,9 +28,10 @@ pub struct EthiopianDate {
 }
 
 impl EthiopianDate {
-    /// Creates an `EthiopianDate` representing today's date.
+    /// Creates an `EthiopianDate` representing today's date in EAT (GMT+3).
     pub fn today() -> Self {
-        let today = Local::now().date_naive();
+        let eat_offset = FixedOffset::east_opt(3 * 3600).unwrap();
+        let today = Utc::now().with_timezone(&eat_offset).date_naive();
         let gregorian = GregorianYear::new(today.year() as usize, today.month() as usize, today.day() as usize);
         let ethiopian: EthiopianYear = gregorian.into();
 
@@ -274,12 +283,16 @@ impl CalendarMonth {
         }
     }
 }
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
-};
-use std::sync::Mutex;
+
+
+tauri_panel! {
+    panel!(CalendarPanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true
+        }
+    })
+}
 
 /// Global state for remembering tray icon position to position calendar window correctly.
 static LAST_TRAY_X: Mutex<Option<f64>> = Mutex::new(None);
@@ -326,8 +339,6 @@ fn convert_gregorian_to_ethiopian(year: i32, month: u32, day: u32) -> Option<Eth
 }
 
 /// Positions the calendar window relative to the tray icon. Maybe it would be to have it left align to tray? TODO
-///
-/// Handles DPI scaling and fallback positioning when tray position is unknown.
 #[tauri::command]
 fn position_calendar_window(app: tauri::AppHandle, tray_x: Option<f64>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -433,9 +444,95 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+fn refresh_tray_display(app: tauri::AppHandle) -> Result<(), String> {
+    let settings = load_settings(app.clone()).unwrap_or_default();
+    let today = EthiopianDate::today();
+    let month_meta = CalendarMonth::new(today.year, today.month);
+
+    let text = if settings.use_numeric_format {
+        let dd = if settings.use_geez_numbers {
+            EthiopianDate::to_geez_number(today.day)
+        } else {
+            format!("{:02}", today.day)
+        };
+        let mm = if settings.use_geez_numbers {
+            EthiopianDate::to_geez_number(today.month)
+        } else {
+            format!("{:02}", today.month)
+        };
+        let yyyy = if settings.use_geez_numbers {
+            EthiopianDate::to_geez_number(today.year)
+        } else {
+            today.year.to_string()
+        };
+
+        let parts = vec![dd, mm, yyyy];
+        parts.join("/")
+    } else {
+        let month_name = if settings.use_amharic {
+            month_meta.month_name_amharic.clone()
+        } else {
+            month_meta.month_name_english.clone()
+        };
+        let day_txt = if settings.use_geez_numbers {
+            today.day_geez.clone()
+        } else {
+            today.day.to_string()
+        };
+        let year_txt = if settings.use_geez_numbers {
+            month_meta.year_geez.clone()
+        } else {
+            today.year.to_string()
+        };
+
+        let mut parts = Vec::new();
+        parts.push(month_name);
+        parts.push(day_txt);
+        if settings.use_amharic && settings.show_qen {
+            parts.push("ቀን".to_string());
+        }
+        parts.push(year_txt);
+        if settings.use_amharic && settings.show_amete_mihret {
+            parts.push("ዓ.ም.".to_string());
+        }
+        parts.join(" ")
+    };
+
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(Some(&text));
+    }
+
+    Ok(())
+}
+
+fn create_calendar_panel(app: &tauri::App) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        let panel = window.to_panel::<CalendarPanel>()
+            .map_err(|e| format!("Failed to convert window to panel: {}", e))?;
+
+        panel.set_level(PanelLevel::Floating.value());
+        panel.set_style_mask(
+            StyleMask::empty()
+                .nonactivating_panel()
+                .into()
+        );
+        panel.set_collection_behavior(
+            CollectionBehavior::new()
+                .full_screen_auxiliary()
+                .can_join_all_spaces()
+                .into()
+        );
+        panel.set_hides_on_deactivate(false);
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -476,7 +573,6 @@ pub fn run() {
                         if let Some(window) = app.get_webview_window("settings") {
                             let _ = position_calendar_window(app.clone(), None);
                             let _ = window.show();
-                            let _ = window.set_focus();
                         }
                     }
                     _ => {}
@@ -495,7 +591,6 @@ pub fn run() {
                             let tray_x = position.x - 180.0;
                             let _ = position_calendar_window(app.clone(), Some(tray_x));
                             let _ = window.show();
-                            let _ = window.set_focus();
                         }
                     }
                 })
@@ -523,6 +618,10 @@ pub fn run() {
                 });
             }
 
+            if let Err(e) = create_calendar_panel(app) {
+                eprintln!("Failed to setup calendar panel: {}", e);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -535,7 +634,8 @@ pub fn run() {
             set_tray_icon,
             load_settings,
             save_settings,
-            copy_to_clipboard
+            copy_to_clipboard,
+            refresh_tray_display
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
