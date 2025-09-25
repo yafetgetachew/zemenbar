@@ -1,9 +1,18 @@
 //!
 //! This library provides Ethiopian calendar functionality for Zemenbar with system tray integration.
 
+use chrono::{Datelike, FixedOffset, Utc};
 use ethiopic_calendar::{EthiopianYear, GregorianYear};
-use chrono::{Datelike, Local};
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
+use tauri_nspanel::{
+    tauri_panel, CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt,
+};
 
 /// Represents a date in the Ethiopian calendar system.
 ///
@@ -19,9 +28,10 @@ pub struct EthiopianDate {
 }
 
 impl EthiopianDate {
-    /// Creates an `EthiopianDate` representing today's date.
+    /// Creates an `EthiopianDate` representing today's date in EAT (GMT+3).
     pub fn today() -> Self {
-        let today = Local::now().date_naive();
+        let eat_offset = FixedOffset::east_opt(3 * 3600).unwrap();
+        let today = Utc::now().with_timezone(&eat_offset).date_naive();
         let gregorian = GregorianYear::new(today.year() as usize, today.month() as usize, today.day() as usize);
         let ethiopian: EthiopianYear = gregorian.into();
 
@@ -273,15 +283,7 @@ impl CalendarMonth {
         }
     }
 }
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
-};
-use tauri_nspanel::{
-    tauri_panel, CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt,
-};
-use std::sync::Mutex;
+
 
 tauri_panel! {
     panel!(CalendarPanel {
@@ -442,6 +444,68 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+fn refresh_tray_display(app: tauri::AppHandle) -> Result<(), String> {
+    let settings = load_settings(app.clone()).unwrap_or_default();
+    let today = EthiopianDate::today();
+    let month_meta = CalendarMonth::new(today.year, today.month);
+
+    let text = if settings.use_numeric_format {
+        let dd = if settings.use_geez_numbers {
+            EthiopianDate::to_geez_number(today.day)
+        } else {
+            format!("{:02}", today.day)
+        };
+        let mm = if settings.use_geez_numbers {
+            EthiopianDate::to_geez_number(today.month)
+        } else {
+            format!("{:02}", today.month)
+        };
+        let yyyy = if settings.use_geez_numbers {
+            EthiopianDate::to_geez_number(today.year)
+        } else {
+            today.year.to_string()
+        };
+
+        let parts = vec![dd, mm, yyyy];
+        parts.join("/")
+    } else {
+        let month_name = if settings.use_amharic {
+            month_meta.month_name_amharic.clone()
+        } else {
+            month_meta.month_name_english.clone()
+        };
+        let day_txt = if settings.use_geez_numbers {
+            today.day_geez.clone()
+        } else {
+            today.day.to_string()
+        };
+        let year_txt = if settings.use_geez_numbers {
+            month_meta.year_geez.clone()
+        } else {
+            today.year.to_string()
+        };
+
+        let mut parts = Vec::new();
+        parts.push(month_name);
+        parts.push(day_txt);
+        if settings.use_amharic && settings.show_qen {
+            parts.push("ቀን".to_string());
+        }
+        parts.push(year_txt);
+        if settings.use_amharic && settings.show_amete_mihret {
+            parts.push("ዓ.ም.".to_string());
+        }
+        parts.join(" ")
+    };
+
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(Some(&text));
+    }
+
+    Ok(())
+}
+
 fn create_calendar_panel(app: &tauri::App) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
         let panel = window.to_panel::<CalendarPanel>()
@@ -527,7 +591,6 @@ pub fn run() {
                             let tray_x = position.x - 180.0;
                             let _ = position_calendar_window(app.clone(), Some(tray_x));
                             let _ = window.show();
-                            // No focus call needed for NSPanel
                         }
                     }
                 })
@@ -571,7 +634,8 @@ pub fn run() {
             set_tray_icon,
             load_settings,
             save_settings,
-            copy_to_clipboard
+            copy_to_clipboard,
+            refresh_tray_display
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

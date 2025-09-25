@@ -178,34 +178,34 @@
     }
   }
 
-  function toggleLanguage() {
+  async function toggleLanguage() {
     useAmharic = !useAmharic;
+    await saveSettings();
     updateTrayDisplay();
-    saveSettings();
   }
 
-  function toggleNumbers() {
+  async function toggleNumbers() {
     useGeezNumbers = !useGeezNumbers;
+    await saveSettings();
     updateTrayDisplay();
-    saveSettings();
   }
 
-  function toggleNumericFormat() {
+  async function toggleNumericFormat() {
     useNumericFormat = !useNumericFormat;
+    await saveSettings();
     updateTrayDisplay();
-    saveSettings();
   }
 
-  function toggleShowQen() {
+  async function toggleShowQen() {
     showQen = !showQen;
+    await saveSettings();
     updateTrayDisplay();
-    saveSettings();
   }
 
-  function toggleShowAmeteMihret() {
+  async function toggleShowAmeteMihret() {
     showAmeteMihret = !showAmeteMihret;
+    await saveSettings();
     updateTrayDisplay();
-    saveSettings();
   }
 
   /**
@@ -265,9 +265,23 @@
 
   /**
    * Updates system tray text based on current date and settings.
-   * Handles multiple formats and automatic text shortening.
+   * Uses backend refresh command for consistency.
    */
   async function updateTrayDisplay() {
+    try {
+      await invoke("refresh_tray_display");
+    } catch (error) {
+      console.error("Failed to refresh tray display:", error);
+      // Fallback to old method if backend fails
+      await updateTrayDisplayFallback();
+    }
+  }
+
+  /**
+   * Fallback tray display update method.
+   * Handles multiple formats and automatic text shortening.
+   */
+  async function updateTrayDisplayFallback() {
     if (!currentDate) {
       return;
     }
@@ -371,6 +385,20 @@
     } catch (error) {
       console.error("Failed to position window:", error);
     }
+
+    // Refresh date every 10 minutes to catch day changes quickly
+    setInterval(async () => {
+      await loadCurrentDate();
+      updateTrayDisplay();
+    }, 10 * 60 * 1000); // 10 minutes
+
+    // Also refresh when window becomes visible (handles wake from sleep)
+    document.addEventListener('visibilitychange', async () => {
+      if (!document.hidden) {
+        await loadCurrentDate();
+        updateTrayDisplay();
+      }
+    });
   });
 
   const emptyStartCells = $derived(calendarMonth ? Array((calendarMonth as CalendarMonth).first_day_weekday).fill(null) : []);
@@ -395,13 +423,13 @@
       <button class="control-button" onclick={goToToday}>
         {useAmharic ? "ዛሬ" : "Today"}
       </button>
-      <button class="control-button" onclick={toggleLanguage}>
+      <button class="control-button" onclick={async () => await toggleLanguage()}>
         {useAmharic ? "English" : "አማርኛ"}
       </button>
-      <button class="control-button" onclick={toggleNumbers}>
+      <button class="control-button" onclick={async () => await toggleNumbers()}>
         {useGeezNumbers ? "1234" : "፩፪፫፬"}
       </button>
-      <button class="control-button" onclick={toggleNumericFormat}>
+      <button class="control-button" onclick={async () => await toggleNumericFormat()}>
         {useNumericFormat ? "Text" : "DD/MM"}
       </button>
     </div>
@@ -409,13 +437,13 @@
     <div class="calendar-controls secondary-controls">
       <button
         class="control-button {showQen ? 'enabled' : 'disabled'}"
-        onclick={toggleShowQen}
+        onclick={async () => await toggleShowQen()}
       >
         ቀን
       </button>
       <button
         class="control-button {showAmeteMihret ? 'enabled' : 'disabled'}"
-        onclick={toggleShowAmeteMihret}
+        onclick={async () => await toggleShowAmeteMihret()}
       >
         ዓ.ም.
       </button>
