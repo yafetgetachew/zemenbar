@@ -1583,6 +1583,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hijri_date"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a387bb0f0c8bccc06d768492222305ba72d64cbd0f5e9828afb07d4b05235602"
+dependencies = [
+ "chrono",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5728,6 +5738,7 @@ version = "0.5.1"
 dependencies = [
  "chrono",
  "ethiopic-calendar",
+ "hijri_date",
  "serde",
  "serde_json",
  "tauri",
